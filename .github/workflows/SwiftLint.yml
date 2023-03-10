@@ -1,30 +1,81 @@
-name: SwiftLint
+name: Linting
 
-on:
-  push:
-    branches: [ "main" ]
-  pull_request:
-    paths:
-      - '.github/workflows/swiftlint.yml'
-      - '.swiftlint.yml'
-      - '**/*.swift'
+on: pull_request
 
 jobs:
   SwiftLint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
     steps:
-      - uses: actions/checkout@v1
-      - name: GitHub Action for SwiftLint
-        uses: norio-nomura/action-swiftlint@3.2.1
-      - name: GitHub Action for SwiftLint with --strict
-        uses: norio-nomura/action-swiftlint@3.2.1
+      - uses: actions/checkout@v2
+      - name: Read version from Mintfile
+        run: echo "SWIFTLINT_VERSION=$(awk '/SwiftLint/ {split($0, a, "@"); print a[2]}' Mintfile)" >> $GITHUB_ENV
+      - uses: actions/cache@v2
         with:
-          args: --strict
-      - name: GitHub Action for SwiftLint (Only files changed in the PR)
-        uses: norio-nomura/action-swiftlint@3.2.1
+          path: .build/release/swiftlint
+          key: $-linting-swiftlint-$
+      - name: Build realm/SwiftLint
+        run: |
+          if [ -f ".build/release/swiftlint" ]; then
+            sudo cp -f .build/release/swiftlint /usr/local/bin/swiftlint
+          else
+            git clone --depth 1 --branch $ https://github.com/realm/SwiftLint
+            cd SwiftLint
+            swift build --disable-sandbox -c release
+            mv .build .. && cd ..
+            rm -rf SwiftLint
+            sudo cp -f .build/release/swiftlint /usr/local/bin/swiftlint
+          fi
+      - name: SwiftLint
+        run: |
+          swiftlint --version
+          swiftlint lint --strict --config .swiftlint.yml --quiet
         env:
-          DIFF_BASE: ${{ github.base_ref }}
-      - name: GitHub Action for SwiftLint (Different working directory)
-        uses: norio-nomura/action-swiftlint@3.2.1
+          LINUX_SOURCEKIT_LIB_PATH: /usr/share/swift/usr/lib # FIXED: Fatal error: Loading libsourcekitdInProc.so failed
+  SwiftFormat:
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@v2
+      - name: Read version from Mintfile
+        run: echo "SWIFTFORMAT_VERSION=$(awk '/SwiftFormat/ {split($0, a, "@"); print a[2]}' Mintfile)" >> $GITHUB_ENV
+      - uses: actions/cache@v2
+        with:
+          path: .build/release/swiftformat
+          key: $-linting-swiftformat-$
+      - name: Build nicklockwood/SwiftFormat
+        run: |
+          if [ -f ".build/release/swiftformat" ]; then
+            if ! [ -x "$(command -v swift-format)" ]; then
+              sudo cp -f .build/release/swiftformat /usr/local/bin/swiftformat
+            fi
+          else
+            git clone --depth 1 --branch $ https://github.com/nicklockwood/SwiftFormat
+            cd SwiftFormat
+            swift build --disable-sandbox -c release
+            mv .build .. && cd ..
+            rm -rf SwiftFormat
+            sudo cp -f .build/release/swiftformat /usr/local/bin/swiftformat
+          fi
+      - name: SwiftFormat
+        run: |
+          swiftformat --version
+          swiftformat . --config .swiftformat --lint
+  XcodeBuildAndAnalyze:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Set Default Scheme
+        run: |
+          scheme_list=$(xcodebuild -list -json | tr -d "\n")
+          default=$(echo $scheme_list | ruby -e "require 'json'; puts JSON.parse(STDIN.gets)['project']['targets'][0]")
+          echo $default | cat >default
+          echo Using default scheme: $default
+      - name: Build
         env:
-          WORKING_DIRECTORY: Source
+          scheme: ${{ 'default' }}
+        run: |
+          if [ $scheme = default ]; then scheme=$(cat default); fi
+          if [ "`ls -A | grep -i \\.xcworkspace\$`" ]; then filetype_parameter="workspace" && file_to_build="`ls -A | grep -i \\.xcworkspace\$`"; else filetype_parameter="project" && file_to_build="`ls -A | grep -i \\.xcodeproj\$`"; fi
+          file_to_build=`echo $file_to_build | awk '{$1=$1;print}'`
+          xcodebuild clean build analyze -scheme "$scheme" -"$filetype_parameter" "$file_to_build" | xcpretty && exit ${PIPESTATUS[0]}
+          
