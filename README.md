@@ -1,4 +1,7 @@
 # Cork
+[![Xcode - Build and Analyze](https://github.com/aushe02/Cork/actions/workflows/objective-c-xcode.yml/badge.svg?branch=main)](https://github.com/aushe02/Cork/actions/workflows/objective-c-xcode.yml)
+
+
 A fast GUI for Homebrew written in SwiftUI
 
 ## Special Thanks
